@@ -32,13 +32,16 @@ router.get('/callback/*', async (request, ) => {
     return new Response('No callback URL found in cookies', { status: 400 });
   }
 
-  const path = new URL(request.url).pathname.replace('/callback', '');
-  const newLocation = decodeURIComponent(callbackUrl) + path;
+  const url = new URL(request.url);
+  const path = url.pathname.replace('/callback', '');
+  const params = url.search;
+
+  const newLocation = decodeURIComponent(callbackUrl) + path + params;
 
   const headers = new Headers();
   headers.set('Location', newLocation);
 
   return new Response(null, { status: 302, headers });
-})
+});
 
 export default router;
