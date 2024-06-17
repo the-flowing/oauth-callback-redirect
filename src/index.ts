@@ -1,49 +1,44 @@
-/**
- * Welcome to Cloudflare Workers! This is your first worker.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
- *
- * Bind resources to your worker in `wrangler.toml`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
+import { AutoRouter, cors } from 'itty-router';
+import { getCookie } from './cookies';
 
-import handleProxy from './proxy';
-import handleRedirect from './redirect';
-import apiRouter from './router';
+// get preflight and corsify pair
+const { preflight, corsify } = cors({
+  origin: "*",
+  credentials: true,
+});
 
-// Export a default object containing event handlers
-export default {
-	// The fetch handler is invoked when this worker receives a HTTP(S) request
-	// and should return a Response (optionally wrapped in a Promise)
-	async fetch(request, env, ctx): Promise<Response> {
-		// You'll find it helpful to parse the request.url string into a URL object. Learn more at https://developer.mozilla.org/en-US/docs/Web/API/URL
-		const url = new URL(request.url);
+const router = AutoRouter({
+    before: [preflight],  // add preflight upstream
+    finally: [corsify],   // and corsify downstream
+});
 
-		// You can get pretty far with simple logic like if/switch-statements
-		switch (url.pathname) {
-			case '/redirect':
-				return handleRedirect.fetch(request, env, ctx);
+router.get('/set', async (request, env: Env) => {
+  const origin = request.headers.get('origin');
+  const headers = new Headers();
 
-			case '/proxy':
-				return handleProxy.fetch(request, env, ctx);
-		}
+  if(!origin) {
+    return new Response('No origin header found', { status: 400 });
+  }
 
-		if (url.pathname.startsWith('/api/')) {
-			// You can also use more robust routing
-			return apiRouter.handle(request);
-		}
+  const maxAge = 60 * 60 * 24; // 1 day in seconds
+  headers.set('Set-Cookie', `callback=${encodeURIComponent(origin)}; Path=/; HttpOnly; Max-Age=${maxAge}; Secure; SameSite=None`);  
+  return new Response('A cookie with the callback url has been set: ' + origin, { headers })
+});
 
-		return new Response(
-			`Try making requests to:
-      <ul>
-      <li><code><a href="/redirect?redirectUrl=https://example.com/">/redirect?redirectUrl=https://example.com/</a></code>,</li>
-      <li><code><a href="/proxy?modify&proxyUrl=https://example.com/">/proxy?modify&proxyUrl=https://example.com/</a></code>, or</li>
-      <li><code><a href="/api/todos">/api/todos</a></code></li>`,
-			{ headers: { 'Content-Type': 'text/html' } }
-		);
-	},
-} satisfies ExportedHandler<Env>;
+router.get('/callback/*', async (request, ) => {
+  const callbackUrl = getCookie(request, 'callback');
+
+  if (!callbackUrl) {
+    return new Response('No callback URL found in cookies', { status: 400 });
+  }
+
+  const path = new URL(request.url).pathname.replace('/callback', '');
+  const newLocation = decodeURIComponent(callbackUrl) + path;
+
+  const headers = new Headers();
+  headers.set('Location', newLocation);
+
+  return new Response(null, { status: 302, headers });
+})
+
+export default router;
